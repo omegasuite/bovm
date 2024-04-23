@@ -397,6 +397,7 @@ func fileExists(name string) bool {
 // newConfigParser returns a new command line flags parser.
 func newConfigParser(cfg *config, so *serviceOptions, options flags.Options) *flags.Parser {
 	parser := flags.NewParser(cfg, options)
+	parser.AddGroup("BTC Options", "", cfg)
 	if runtime.GOOS == "windows" {
 		parser.AddGroup("Service Options", "Service Options", so)
 	}

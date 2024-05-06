@@ -12,7 +12,7 @@ import (
 
 	"github.com/btcsuite/btcd/blockchain"
 	"github.com/btcsuite/btcd/database"
-	"github.com/btcsuite/btcd/limits"
+//	"github.com/btcsuite/btcd/limits"
 	"github.com/btcsuite/btclog"
 )
 
@@ -111,9 +111,9 @@ func realMain() error {
 
 func main() {
 	// up some limits.
-	if err := limits.SetLimits(); err != nil {
-		os.Exit(1)
-	}
+//	if err := limits.SetLimits(); err != nil {
+//		os.Exit(1)
+//	}
 
 	// Work around defer not working after os.Exit()
 	if err := realMain(); err != nil {

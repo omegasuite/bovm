@@ -16,6 +16,7 @@ import (
 	"runtime/pprof"
 
 	"github.com/btcsuite/btcd/blockchain/indexers"
+	"github.com/btcsuite/btcd/btc2omg/omgd"
 	"github.com/btcsuite/btcd/database"
 	"github.com/btcsuite/btcd/limits"
 	"github.com/btcsuite/btcd/ossec"
@@ -264,15 +265,29 @@ func btcdMain(serverChan chan<- *server) error {
 		server.WaitForShutdown()
 		srvrLog.Infof("Server shutdown complete")
 	}()
+
+	// prepare BTCD Layer 2
+	if err = omgd.Construct(); err != nil {
+		return err
+	}
+
+	omgd.Connect(server.chain.Subscribe)
+
 	server.Start()
 	if serverChan != nil {
 		serverChan <- server
 	}
 
+	// start BTCD Layer 2
+	omgd.Start(shutdownRequestChannel)
+
 	// Wait until the interrupt signal is received from an OS signal or
 	// shutdown is requested through one of the subsystems such as the RPC
 	// server.
 	<-interrupt
+
+	omgd.Stop()
+
 	return nil
 }
 

@@ -267,7 +267,7 @@ func btcdMain(serverChan chan<- *server) error {
 	}()
 
 	// prepare BTCD Layer 2
-	if err = omgd.Construct(); err != nil {
+	if err = omgd.Construct(server.chainParams); err != nil {
 		return err
 	}
 

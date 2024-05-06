@@ -57,9 +57,11 @@ replace (
 	github.com/btcsuite/go-socks/socks => ../go-socks/socks
 	github.com/btcsuite/snappy-go => f:/Gopath/src/github.com/btcsuite/snappy-go
 	github.com/goinggo/mapstructure => ../../goinggo/mapstructure
+	github.com/btcsuite/btcd/btc2omg/btcd/txscript => f:/Gopath/src/github.com/btcsuite/btcd/btc2omg/btcd/txscript
 )
 
 require (
+	github.com/btcsuite/btcd/btc2omg/btcd/txscript v1.0.0
 	github.com/btcsuite/btcd/btc2omg/btcd/addrmgr v1.0.0 // indirect
 	github.com/btcsuite/btcd/btc2omg/btcd/blockchain v1.0.0 // indirect
 	github.com/btcsuite/btcd/btc2omg/btcd/blockchain/bccompress v1.0.0 // indirect

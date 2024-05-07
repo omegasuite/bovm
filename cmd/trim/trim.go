@@ -6,13 +6,12 @@ package main
 
 import (
 	"fmt"
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"os"
 	"path/filepath"
 
 	"github.com/btcsuite/btcd/blockchain"
 	"github.com/btcsuite/btcd/database"
-//	"github.com/btcsuite/btcd/limits"
+	//	"github.com/btcsuite/btcd/limits"
 	"github.com/btcsuite/btclog"
 )
 
@@ -26,21 +25,11 @@ var (
 	log btclog.Logger
 )
 
-func trim(db database.DB, chain *blockchain.BlockChain) {
-	hash, err := chainhash.NewHashFromStr(cfg.Trim)
-	if err != nil {
-		return
-	}
-
-	blockIdxBucketName := []byte("ffldb-blockidx")
-
-	for block, err := chain.BlockByHash(hash); block != nil && err == nil; block, err = chain.BlockByHash(&block.MsgBlock().Header.PrevBlock) {
-		db.Update(func(tx database.Tx) error {
-			blockIndexBucket := tx.Metadata().Bucket(blockIdxBucketName)
-			blockIndexBucket.Delete(hash.CloneBytes())
-			return nil
-		})
-	}
+func trim(db database.DB) {
+	db.Update(func(tx database.Tx) error {
+		tx.PruneBlocks(uint64(cfg.Trim) * 1024 * 1024)
+		return nil
+	})
 }
 
 // loadBlockDB opens the block database and returns a handle to it.
@@ -83,37 +72,21 @@ func realMain() error {
 		return err
 	}
 	defer db.Close()
-
-	var interrupt <-chan struct{}
-	var timeSource blockchain.MedianTimeSource
-
-	chain, err := blockchain.New(&blockchain.Config{
-		DB:               db,
-		Interrupt:        interrupt,
-		ChainParams:      activeNetParams,
-		Checkpoints:      nil,
-		TimeSource:       timeSource,
-		SigCache:         nil,
-		IndexManager:     nil,
-		HashCache:        nil,
-		Prune:            1024 * 1024,
-		UtxoCacheMaxSize: 1024 * 1024,
-	})
-
+	
 	if err != nil {
 		return err
 	}
 
-	trim(db, chain)
+	trim(db)
 
 	return nil
 }
 
 func main() {
 	// up some limits.
-//	if err := limits.SetLimits(); err != nil {
-//		os.Exit(1)
-//	}
+	//	if err := limits.SetLimits(); err != nil {
+	//		os.Exit(1)
+	//	}
 
 	// Work around defer not working after os.Exit()
 	if err := realMain(); err != nil {

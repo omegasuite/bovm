@@ -33,7 +33,7 @@ var (
 // See loadConfig for details on the configuration load process.
 type config struct {
 	DataDir  string `short:"b" long:"datadir" description:"Location of the btcd data directory"`
-	Trim     string `short:"b" long:"trim" description:"Hash of block to trim to (incl.)"`
+	Trim     uint32 `short:"t" long:"trim" description:"Allowed block storage size in MB"`
 	SimNet   bool   `long:"simnet" description:"Use the simulation test network"`
 	TestNet3 bool   `long:"testnet" description:"Use the test network"`
 }

@@ -61,7 +61,8 @@ replace (
 )
 
 require (
-	github.com/btcsuite/btcd/btc2omg/btcd/txscript v1.0.0
+	github.com/btcsuite/btcd/btc2omg/btcd/treasury v1.0.0
+	github.com/btcsuite/btcd/txscript v1.0.0
 	github.com/btcsuite/btcd/btc2omg/btcd/addrmgr v1.0.0 // indirect
 	github.com/btcsuite/btcd/btc2omg/btcd/blockchain v1.0.0 // indirect
 	github.com/btcsuite/btcd/btc2omg/btcd/blockchain/bccompress v1.0.0 // indirect

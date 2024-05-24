@@ -2913,6 +2913,7 @@ type retrievedTx struct {
 	txBytes []byte
 	blkHash *chainhash.Hash // Only set when transaction is in a block.
 	tx      *btcutil.Tx
+	height  uint32
 }
 
 // fetchInputTxos fetches the outpoints from all transactions referenced by the
@@ -3138,9 +3139,9 @@ func handleSearchRawTransactions(s *rpcServer, cmd interface{}, closeChan <-chan
 	// each input if needed.
 	c := cmd.(*btcjson.SearchRawTransactionsCmd)
 	vinExtra := false
-	if c.VinExtra != nil {
-		vinExtra = *c.VinExtra != 0
-	}
+	//	if c.VinExtra != nil {
+	//		vinExtra = *c.VinExtra != 0
+	//	}
 
 	// Including the extra previous output information requires the
 	// transaction index.  Currently the address index relies on the
@@ -3178,18 +3179,22 @@ func handleSearchRawTransactions(s *rpcServer, cmd interface{}, closeChan <-chan
 	}
 
 	// Override the default number of entries to skip if needed.
-	var numToSkip int
+	var blocksToSkip int
 	if c.Skip != nil {
-		numToSkip = *c.Skip
-		if numToSkip < 0 {
-			numToSkip = 0
+		blocksToSkip = *c.Skip
+		if blocksToSkip < 0 {
+			blocksToSkip = 0
 		}
 	}
 
+	best := s.cfg.Chain.BestSnapshot()
 	// Override the reverse flag if needed.
 	var reverse bool
 	if c.Reverse != nil {
 		reverse = *c.Reverse
+	}
+	if reverse && blocksToSkip == 0 {
+		blocksToSkip = int(best.Height + 1)
 	}
 
 	// Add transactions from mempool first if client asked for reverse
@@ -3199,74 +3204,91 @@ func handleSearchRawTransactions(s *rpcServer, cmd interface{}, closeChan <-chan
 	// NOTE: This code doesn't sort by dependency.  This might be something
 	// to do in the future for the client's convenience, or leave it to the
 	// client.
-	numSkipped := uint32(0)
+	//	numSkipped := uint32(0)
 	addressTxns := make([]retrievedTx, 0, numRequested)
-	if reverse {
-		// Transactions in the mempool are not in a block header yet,
-		// so the block header field in the retrieved transaction struct
-		// is left nil.
-		mpTxns, mpSkipped := fetchMempoolTxnsForAddress(s, addr,
-			uint32(numToSkip), uint32(numRequested))
-		numSkipped += mpSkipped
-		for _, tx := range mpTxns {
-			addressTxns = append(addressTxns, retrievedTx{tx: tx})
-		}
+	memlimit := 5 * 1024 * 1024 // 5 M mem limit
+	if c.Verbose == nil || *c.Verbose != 0 {
+		memlimit /= 4
 	}
+	/*
+		if reverse {
+			// Transactions in the mempool are not in a block header yet,
+			// so the block header field in the retrieved transaction struct
+			// is left nil.
+			mpTxns, mpSkipped := fetchMempoolTxnsForAddress(s, addr,
+				uint32(numToSkip), uint32(numRequested))
+			numSkipped += mpSkipped
+			for _, tx := range mpTxns {
+				addressTxns = append(addressTxns, retrievedTx{tx: tx})
+			}
+		}
+	*/
 
 	// Fetch transactions from the database in the desired order if more are
 	// needed.
-	if len(addressTxns) < numRequested {
-		err = s.cfg.DB.View(func(dbTx database.Tx) error {
-			regions, dbSkipped, err := addrIndex.TxRegionsForAddress(
-				dbTx, addr, uint32(numToSkip)-numSkipped,
-				uint32(numRequested-len(addressTxns)), reverse)
-			if err != nil {
-				return err
-			}
-
-			// Load the raw transaction bytes from the database.
-			serializedTxns, err := dbTx.FetchBlockRegions(regions)
-			if err != nil {
-				return err
-			}
-
-			// Add the transaction and the hash of the block it is
-			// contained in to the list.  Note that the transaction
-			// is left serialized here since the caller might have
-			// requested non-verbose output and hence there would be
-			// no point in deserializing it just to reserialize it
-			// later.
-			for i, serializedTx := range serializedTxns {
-				addressTxns = append(addressTxns, retrievedTx{
-					txBytes: serializedTx,
-					blkHash: regions[i].Hash,
-				})
-			}
-			numSkipped += dbSkipped
-
-			return nil
-		})
+	//	if len(addressTxns) < numRequested {
+	err = s.cfg.DB.View(func(dbTx database.Tx) error {
+		regions, heights, _, err := addrIndex.TxRegionsForAddress(
+			dbTx, addr, uint32(blocksToSkip),
+			uint32(numRequested), reverse)
 		if err != nil {
-			context := "Failed to load address index entries"
-			return nil, internalRPCError(err.Error(), context)
+			return err
 		}
 
+		// Load the raw transaction bytes from the database.
+		serializedTxns, err := dbTx.FetchBlockRegions(regions)
+		if err != nil {
+			return err
+		}
+
+		lastHeight := -1
+
+		// Add the transaction and the hash of the block it is
+		// contained in to the list.  Note that the transaction
+		// is left serialized here since the caller might have
+		// requested non-verbose output and hence there would be
+		// no point in deserializing it just to reserialize it
+		// later.
+		for i, serializedTx := range serializedTxns {
+			if memlimit <= 0 && lastHeight != int(heights[i]-1) {
+				return nil
+			}
+
+			lastHeight = int(heights[i] - 1)
+
+			addressTxns = append(addressTxns, retrievedTx{
+				txBytes: serializedTx,
+				height:  heights[i] - 1, // height in serializedTxns is internal height which is 1 more than real height
+				blkHash: regions[i].Hash,
+			})
+		}
+		//			numSkipped += dbSkipped
+
+		return nil
+	})
+	if err != nil {
+		context := "Failed to load address index entries"
+		return nil, internalRPCError(err.Error(), context)
 	}
+
+	//	}
 
 	// Add transactions from mempool last if client did not request reverse
 	// order and the number of results is still under the number requested.
-	if !reverse && len(addressTxns) < numRequested {
-		// Transactions in the mempool are not in a block header yet,
-		// so the block header field in the retrieved transaction struct
-		// is left nil.
-		mpTxns, mpSkipped := fetchMempoolTxnsForAddress(s, addr,
-			uint32(numToSkip)-numSkipped, uint32(numRequested-
-				len(addressTxns)))
-		numSkipped += mpSkipped
-		for _, tx := range mpTxns {
-			addressTxns = append(addressTxns, retrievedTx{tx: tx})
+	/*
+		if !reverse && len(addressTxns) < numRequested {
+			// Transactions in the mempool are not in a block header yet,
+			// so the block header field in the retrieved transaction struct
+			// is left nil.
+			mpTxns, mpSkipped := fetchMempoolTxnsForAddress(s, addr,
+				uint32(numToSkip)-numSkipped, uint32(numRequested-
+					len(addressTxns)))
+			numSkipped += mpSkipped
+			for _, tx := range mpTxns {
+				addressTxns = append(addressTxns, retrievedTx{tx: tx})
+			}
 		}
-	}
+	*/
 
 	// Address has never been used if neither source yielded any results.
 	if len(addressTxns) == 0 {
@@ -3277,22 +3299,50 @@ func handleSearchRawTransactions(s *rpcServer, cmd interface{}, closeChan <-chan
 	}
 
 	// Serialize all of the transactions to hex.
-	hexTxns := make([]string, len(addressTxns))
+	//	hexTxns := make([]string, len(addressTxns))
+	hexTxns := make([]btcjson.SearchRawTransactionsRawResult, len(addressTxns))
 	for i := range addressTxns {
 		// Simply encode the raw bytes to hex when the retrieved
 		// transaction is already in serialized form.
 		rtx := &addressTxns[i]
+		hexTxns[i].Height = rtx.height
 		if rtx.txBytes != nil {
 			hexTxns[i] = hex.EncodeToString(rtx.txBytes)
-			continue
+		} else {
+			// Serialize the transaction first and convert to hex when the
+			// retrieved transaction is the deserialized structure.
+			hexTxns[i].Hex, err = messageToHex(rtx.tx.MsgTx())
+			if err != nil {
+				return nil, err
+			}
+		}
+		hexTxns[i].BlockHash = rtx.blkHash.String()
+
+		var mtx *wire.MsgTx
+		if rtx.tx == nil {
+			// Deserialize the transaction.
+			mtx = new(wire.MsgTx)
+			err := mtx.Deserialize(bytes.NewReader(rtx.txBytes))
+			if err != nil {
+				context := "Failed to deserialize transaction"
+				return nil, internalRPCError(err.Error(),
+					context)
+			}
+		} else {
+			mtx = rtx.tx.MsgTx()
 		}
 
-		// Serialize the transaction first and convert to hex when the
-		// retrieved transaction is the deserialized structure.
-		hexTxns[i], err = messageToHex(rtx.tx.MsgTx())
+		hexTxns[i].Txid = mtx.TxHash().String()
+
+		header, err := s.cfg.Chain.HeaderByHash(rtx.blkHash)
 		if err != nil {
-			return nil, err
+			return nil, &btcjson.RPCError{
+				Code:    btcjson.ErrRPCBlockNotFound,
+				Message: "Block not found",
+			}
 		}
+
+		hexTxns[i].Blocktime = header.Timestamp.Unix()
 	}
 
 	// When not in verbose mode, simply return a list of serialized txns.
@@ -3331,9 +3381,8 @@ func handleSearchRawTransactions(s *rpcServer, cmd interface{}, closeChan <-chan
 		} else {
 			mtx = rtx.tx.MsgTx()
 		}
-
 		result := &srtList[i]
-		result.Hex = hexTxns[i]
+		result.Hex = hexTxns[i].Hex
 		result.Txid = mtx.TxHash().String()
 		result.Vin, err = createVinListPrevOut(s, mtx, params, vinExtra,
 			filterAddrMap)
@@ -3344,7 +3393,7 @@ func handleSearchRawTransactions(s *rpcServer, cmd interface{}, closeChan <-chan
 		result.Version = mtx.Version
 		result.LockTime = mtx.LockTime
 
-		// Transactions grabbed from the mempool aren't yet in a block,
+		// Height grabbed from the mempool aren't yet in a block,
 		// so conditionally fetch block details here.  This will be
 		// reflected in the final JSON output (mempool won't have
 		// confirmations or block information).
@@ -3361,23 +3410,14 @@ func handleSearchRawTransactions(s *rpcServer, cmd interface{}, closeChan <-chan
 				}
 			}
 
-			// Get the block height from chain.
-			height, err := s.cfg.Chain.BlockHeightByHash(blkHash)
-			if err != nil {
-				context := "Failed to obtain block height"
-				return nil, internalRPCError(err.Error(), context)
-			}
-
 			blkHeader = &header
 			blkHashStr = blkHash.String()
-			blkHeight = height
+			blkHeight = int32(rtx.height)
 		}
 
 		// Add the block information to the result if there is any.
 		if blkHeader != nil {
-			// This is not a typo, they are identical in Bitcoin
-			// Core as well.
-			result.Time = blkHeader.Timestamp.Unix()
+			result.Height = uint32(blkHeight)
 			result.Blocktime = blkHeader.Timestamp.Unix()
 			result.BlockHash = blkHashStr
 			result.Confirmations = uint64(1 + best.Height - blkHeight)

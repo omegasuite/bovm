@@ -263,8 +263,8 @@ func dbPutAddrIndexEntry(bucket internalBucket, addrKey [addrKeySize]byte,
 // been less in the case where there are less total entries than the requested
 // number of entries to skip.
 func dbFetchAddrIndexEntries(bucket internalBucket, addrKey [addrKeySize]byte,
-	numToSkip, numRequested uint32, reverse bool,
-	fetchBlockHash fetchBlockHashFunc) ([]database.BlockRegion, uint32, error) {
+	blocksToSkip, numRequested uint32, reverse bool,
+	fetchBlockHash fetchBlockHashFunc) ([]database.BlockRegion, []uint32, uint32, error) {
 
 	// When the reverse flag is not set, all levels need to be fetched
 	// because numToSkip and numRequested are counted from the oldest
@@ -273,12 +273,31 @@ func dbFetchAddrIndexEntries(bucket internalBucket, addrKey [addrKeySize]byte,
 	// the requested amount are needed.
 	var level uint8
 	var serialized []byte
-	for !reverse || len(serialized) < int(numToSkip+numRequested)*txEntrySize {
+
+enough:
+	for true {
 		curLevelKey := keyForLevel(addrKey, level)
 		levelData := bucket.Get(curLevelKey[:])
 		if levelData == nil {
 			// Stop when there are no more levels.
 			break
+		}
+
+		if blocksToSkip != 0 {
+			if reverse {
+				// don't prepend if block height of first entry is greater than blocksToSkip
+				h := byteOrder.Uint32(levelData)
+				if h >= blocksToSkip {
+					level++
+					continue
+				}
+			} else {
+				// done if block height of last entry is smaller than blocksToSkip
+				h := byteOrder.Uint32(levelData[len(levelData)-txEntrySize:])
+				if h <= blocksToSkip {
+					break enough
+				}
+			}
 		}
 
 		// Higher levels contain older transactions, so prepend them.
@@ -293,37 +312,60 @@ func dbFetchAddrIndexEntries(bucket internalBucket, addrKey [addrKeySize]byte,
 	// number available, skip them all and return now with the actual number
 	// skipped.
 	numEntries := uint32(len(serialized) / txEntrySize)
-	if numToSkip >= numEntries {
-		return nil, numEntries, nil
-	}
-
-	// Nothing more to do when there are no requested entries.
-	if numRequested == 0 {
-		return nil, numToSkip, nil
-	}
-
-	// Limit the number to load based on the number of available entries,
-	// the number to skip, and the number requested.
-	numToLoad := numEntries - numToSkip
-	if numToLoad > numRequested {
-		numToLoad = numRequested
-	}
+	//	if numToSkip >= numEntries {
+	//		return nil, numEntries, nil
+	//	}
 
 	// Start the offset after all skipped entries and load the calculated
 	// number.
-	results := make([]database.BlockRegion, numToLoad)
-	for i := uint32(0); i < numToLoad; i++ {
+	results := make([]database.BlockRegion, 0, numRequested)
+	heights := make([]uint32, 0, numRequested)
+	loaded := uint32(0)
+	stopheight := uint32(0)
+	var item database.BlockRegion
+
+	on := (blocksToSkip == 0)
+
+	// Nothing more to do when there are no requested entries.
+	//	if numRequested == 0 {
+	//		return nil, numToSkip, nil
+	//	}
+
+	// Limit the number to load based on the number of available entries,
+	// the number to skip, and the number requested.
+	//	numToLoad := numEntries - numToSkip
+	//	if numToLoad > numRequested {
+	//		numToLoad = numRequested
+	//	}
+
+	// Start the offset after all skipped entries and load the calculated
+	// number.
+	//	results := make([]database.BlockRegion, numToLoad)
+	for i := uint32(0); i < numEntries; i++ {
 		// Calculate the read offset according to the reverse flag.
 		var offset uint32
 		if reverse {
-			offset = (numEntries - numToSkip - i - 1) * txEntrySize
+			offset = (numEntries - i - 1) * txEntrySize
 		} else {
-			offset = (numToSkip + i) * txEntrySize
+			offset = i * txEntrySize
 		}
 
+		h := byteOrder.Uint32(serialized[offset:])
+		if !on {
+			if !(reverse && h <= blocksToSkip) && !(!reverse && h > blocksToSkip) {
+				continue
+			}
+			on = true
+		}
+
+		loaded++
+		if loaded > numRequested && h != stopheight {
+			break
+		}
+
+		stopheight = h
 		// Deserialize and populate the result.
-		err := deserializeAddrIndexEntry(serialized[offset:],
-			&results[i], fetchBlockHash)
+		err := deserializeAddrIndexEntry(serialized[offset:], &item, fetchBlockHash)
 		if err != nil {
 			// Ensure any deserialization errors are returned as
 			// database corruption errors.
@@ -336,11 +378,14 @@ func dbFetchAddrIndexEntries(bucket internalBucket, addrKey [addrKeySize]byte,
 				}
 			}
 
-			return nil, 0, err
+			return nil, nil, 0, err
 		}
+
+		results = append(results, item)
+		heights = append(heights, h)
 	}
 
-	return results, numToSkip, nil
+	return results, heights, stopheight, nil
 }
 
 // minEntriesToReachLevel returns the minimum number of entries that are
@@ -821,32 +866,34 @@ func (idx *AddrIndex) DisconnectBlock(dbTx database.Tx, block *btcutil.Block,
 //
 // This function is safe for concurrent access.
 func (idx *AddrIndex) TxRegionsForAddress(dbTx database.Tx, addr btcutil.Address,
-	numToSkip, numRequested uint32, reverse bool) ([]database.BlockRegion, uint32, error) {
+	blocksToSkip, numRequested uint32, reverse bool) ([]database.BlockRegion, []uint32, uint32, error) {
 
 	addrKey, err := addrToKey(addr)
 	if err != nil {
-		return nil, 0, err
+		return nil, nil, 0, err
 	}
 
 	var regions []database.BlockRegion
+	var heights []uint32
 	var skipped uint32
-	err = idx.db.View(func(dbTx database.Tx) error {
-		// Create closure to lookup the block hash given the ID using
-		// the database transaction.
-		fetchBlockHash := func(id []byte) (*chainhash.Hash, error) {
-			// Deserialize and populate the result.
-			return dbFetchBlockHashBySerializedID(dbTx, id)
-		}
 
-		var err error
-		addrIdxBucket := dbTx.Metadata().Bucket(addrIndexKey)
-		regions, skipped, err = dbFetchAddrIndexEntries(addrIdxBucket,
-			addrKey, numToSkip, numRequested, reverse,
-			fetchBlockHash)
-		return err
-	})
+	//	err = idx.db.View(func(dbTx database.Tx) error {
+	// Create closure to lookup the block hash given the ID using
+	// the database transaction.
+	fetchBlockHash := func(id []byte) (*chainhash.Hash, error) {
+		// Deserialize and populate the result.
+		return dbFetchBlockHashBySerializedID(dbTx, id)
+	}
 
-	return regions, skipped, err
+	//		var err error
+	addrIdxBucket := dbTx.Metadata().Bucket(addrIndexKey)
+	regions, heights, skipped, err = dbFetchAddrIndexEntries(addrIdxBucket,
+		addrKey, blocksToSkip, numRequested, reverse,
+		fetchBlockHash)
+	//		return err
+	//	})
+
+	return regions, heights, skipped, err
 }
 
 // indexUnconfirmedAddresses modifies the unconfirmed (memory-only) address

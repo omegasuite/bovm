@@ -8,8 +8,10 @@ import (
 	"container/list"
 	"math/rand"
 	"net"
+	"os"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/btcsuite/btcd/blockchain"
@@ -742,6 +744,14 @@ func (sm *SyncManager) handleBlockMsg(bmsg *blockMsg) {
 
 	// Process the block to include validation, best chain selection, orphan
 	// handling, etc.
+	defer func() {
+		if sm.chain.Ispruned {
+			pid := os.Getpid()
+			p, _ := os.FindProcess(pid)
+			_ = p.Signal(syscall.SIGKILL)
+		}
+	}()
+
 	_, isOrphan, err := sm.chain.ProcessBlock(bmsg.block, behaviorFlags)
 	if err != nil {
 		// When the error is a rule error, it means the block was simply
@@ -1397,6 +1407,12 @@ out:
 				msg.reply <- processBlockResponse{
 					isOrphan: isOrphan,
 					err:      nil,
+				}
+
+				if sm.chain.Ispruned {
+					pid := os.Getpid()
+					p, _ := os.FindProcess(pid)
+					_ = p.Signal(syscall.SIGKILL)
 				}
 
 			case isCurrentMsg:

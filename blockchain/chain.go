@@ -130,6 +130,7 @@ type BlockChain struct {
 	// efficient chain view into the block index.
 	index     *blockIndex
 	bestChain *chainView
+	Ispruned  bool
 
 	// The UTXO state holds a cached view of the UTXO state of the chain.
 	// It is protected by the chain lock.
@@ -625,6 +626,7 @@ func (b *BlockChain) connectBlock(node *blockNode, block *btcutil.Block,
 
 			// Only attempt to delete if we have any deleted blocks.
 			if len(deletedHashes) != 0 {
+				b.Ispruned = true
 				// Delete the spend journals of the pruned blocks.
 				err = dbPruneSpendJournalEntry(dbTx, deletedHashes)
 				if err != nil {
@@ -1951,6 +1953,7 @@ func New(config *Config) (*BlockChain, error) {
 		warningCaches:       newThresholdCaches(vbNumBits),
 		deploymentCaches:    newThresholdCaches(chaincfg.DefinedDeployments),
 		pruneTarget:         config.Prune,
+		Ispruned:            false,
 	}
 
 	// Ensure all the deployments are synchronized with our clock if

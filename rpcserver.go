@@ -3360,7 +3360,7 @@ func handleSearchRawTransactions(s *rpcServer, cmd interface{}, closeChan <-chan
 	}
 
 	// The verbose flag is set, so generate the JSON object and return it.
-	best := s.cfg.Chain.BestSnapshot()
+	//	best := s.cfg.Chain.BestSnapshot()
 	srtList := make([]btcjson.SearchRawTransactionsResult, len(addressTxns))
 	for i := range addressTxns {
 		// The deserialized transaction is needed, so deserialize the

@@ -3307,7 +3307,7 @@ func handleSearchRawTransactions(s *rpcServer, cmd interface{}, closeChan <-chan
 		rtx := &addressTxns[i]
 		hexTxns[i].Height = rtx.height
 		if rtx.txBytes != nil {
-			hexTxns[i] = hex.EncodeToString(rtx.txBytes)
+			hexTxns[i].Hex = hex.EncodeToString(rtx.txBytes)
 		} else {
 			// Serialize the transaction first and convert to hex when the
 			// retrieved transaction is the deserialized structure.

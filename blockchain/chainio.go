@@ -1190,7 +1190,7 @@ func (b *BlockChain) initChainState() error {
 	}
 
 	// Attempt to load the chain state from the database.
-	err = b.db.View(func(dbTx database.Tx) error {
+	err = b.db.Update(func(dbTx database.Tx) error {
 		// Fetch the stored chain state from the database metadata.
 		// When it doesn't exist, it means the database hasn't been
 		// initialized for use with chain yet, so break out now to allow
@@ -1218,6 +1218,10 @@ func (b *BlockChain) initChainState() error {
 			header, status, err := deserializeBlockRow(cursor.Value())
 			if err != nil {
 				return err
+			}
+			if status.KnownInvalid() {
+				blockIndexBucket.Delete(cursor.Key())
+				continue
 			}
 
 			// Determine the parent block node. Since we iterate block headers

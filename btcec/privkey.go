@@ -5,7 +5,7 @@
 package btcec
 
 import (
-	secp "github.com/decred/dcrd/dcrec/secp256k1"
+	secp "github.com/decred/dcrd/dcrec/secp256k1/v4"
 )
 
 // PrivateKey wraps an ecdsa.PrivateKey as a convenience mainly for signing

@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	treasury "github.com/btcsuite/btcd/btc2omg/btcd/treasury"
 	"io"
 	"io/ioutil"
 	"math/big"
@@ -533,6 +534,11 @@ func handleCreateRawTransaction(s *rpcServer, cmd interface{}, closeChan <-chan 
 		}
 	}
 
+	payToL2 := false
+	if c.PayToL2 != nil {
+		payToL2 = *c.PayToL2
+	}
+
 	// Add all transaction inputs to a new transaction after performing
 	// some validity checks.
 	mtx := wire.NewMsgTx(wire.TxVersion)
@@ -583,6 +589,7 @@ func handleCreateRawTransaction(s *rpcServer, cmd interface{}, closeChan <-chan 
 				Message: "Invalid address or key",
 			}
 		}
+
 		if !addr.IsForNet(params) {
 			return nil, &btcjson.RPCError{
 				Code: btcjson.ErrRPCInvalidAddressOrKey,
@@ -591,11 +598,20 @@ func handleCreateRawTransaction(s *rpcServer, cmd interface{}, closeChan <-chan 
 			}
 		}
 
-		// Create a new script which pays to the provided address.
-		pkScript, err := txscript.PayToAddrScript(addr)
-		if err != nil {
-			context := "Failed to generate pay-to-address script"
-			return nil, internalRPCError(err.Error(), context)
+		var pkScript []byte
+
+		if payToL2 {
+			var h [20]byte
+			copy(h[:], addr.ScriptAddress())
+			pkScript, _ = treasury.Get75pctMSScript(h)
+		} else {
+			var err error
+			// Create a new script which pays to the provided address.
+			pkScript, err = txscript.PayToAddrScript(addr)
+			if err != nil {
+				context := "Failed to generate pay-to-address script"
+				return nil, internalRPCError(err.Error(), context)
+			}
 		}
 
 		// Convert the amount to satoshi.
@@ -2799,7 +2815,10 @@ func handleGetTxOut(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (i
 		// that are spent by a mempool transaction are not affected by
 		// this.
 		if entry == nil || entry.IsSpent() {
-			return nil, nil
+			return nil, &btcjson.RPCError{
+				Code:    btcjson.ErrRPCInvalidTxVout,
+				Message: "TXO has been spent or does not exist.",
+			}
 		}
 
 		best := s.cfg.Chain.BestSnapshot()

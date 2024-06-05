@@ -614,6 +614,13 @@ func handleCreateRawTransaction(s *rpcServer, cmd interface{}, closeChan <-chan 
 			}
 		}
 
+		if pkScript == nil {
+			return nil, &btcjson.RPCError{
+				Code:    btcjson.ErrRPCInvalidAddressOrKey,
+				Message: "Invalid pkScript generated for " + encodedAddr,
+			}
+		}
+
 		// Convert the amount to satoshi.
 		satoshi, err := btcutil.NewAmount(amount)
 		if err != nil {

@@ -1164,4 +1164,5 @@ func init() {
 	MustRegisterCmd("verifytxoutproof", (*VerifyTxOutProofCmd)(nil), flags)
 	MustRegisterCmd("testmempoolaccept", (*TestMempoolAcceptCmd)(nil), flags)
 	MustRegisterCmd("gettxspendingprevout", (*GetTxSpendingPrevOutCmd)(nil), flags)
+	MustRegisterCmd("signrawtransaction", (*SignRawTransactionCmd)(nil), flags)
 }

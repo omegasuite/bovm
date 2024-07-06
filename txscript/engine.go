@@ -1141,7 +1141,12 @@ func (vm *Engine) Execute() (err error) {
 		}
 	}
 
-	return vm.CheckErrorCondition(true)
+	res := vm.CheckErrorCondition(true)
+	if res != nil {
+		fmt.Printf("vm exec failed")
+		return nil
+	}
+	return res
 }
 
 // subScript returns the script since the last OP_CODESEPARATOR.

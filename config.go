@@ -185,6 +185,8 @@ type config struct {
 	miningAddrs          []btcutil.Address
 	minRelayTxFee        btcutil.Amount
 	whitelists           []*net.IPNet
+
+	Accounts bool `long:"accounts" description:"List accounts and balanced"`
 }
 
 // serviceOptions defines the configuration options for the daemon as a service on

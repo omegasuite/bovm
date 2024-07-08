@@ -1304,8 +1304,10 @@ func (b *BlockChain) checkConnectBlock(node *blockNode, block *btcutil.Block, vi
 //
 // This function is safe for concurrent access.
 func (b *BlockChain) CheckConnectBlockTemplate(block *btcutil.Block) error {
-	b.chainLock.Lock()
-	defer b.chainLock.Unlock()
+	b.chainLock.RLock()
+
+
+	defer b.chainLock.RUnlock()
 
 	// Skip the proof of work check as this is just a block template.
 	flags := BFNoPoWCheck

@@ -313,8 +313,10 @@ func calcNextRequiredDifficulty(lastNode HeaderCtx, newBlockTime time.Time,
 //
 // This function is safe for concurrent access.
 func (b *BlockChain) CalcNextRequiredDifficulty(timestamp time.Time) (uint32, error) {
-	b.chainLock.Lock()
+	b.chainLock.RLock()
+
+
 	difficulty, err := calcNextRequiredDifficulty(b.bestChain.Tip(), timestamp, b)
-	b.chainLock.Unlock()
+	b.chainLock.RUnlock()
 	return difficulty, err
 }

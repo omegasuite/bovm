@@ -372,9 +372,10 @@ func (b *BlockChain) ThresholdState(deploymentID uint32) (ThresholdState, error)
 //
 // This function is safe for concurrent access.
 func (b *BlockChain) IsDeploymentActive(deploymentID uint32) (bool, error) {
-	b.chainLock.Lock()
+	b.chainLock.RLock()
+
 	state, err := b.deploymentState(b.bestChain.Tip(), deploymentID)
-	b.chainLock.Unlock()
+	b.chainLock.RUnlock()
 	if err != nil {
 		return false, err
 	}

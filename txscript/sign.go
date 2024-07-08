@@ -233,7 +233,7 @@ func signMultiSig(tx *wire.MsgTx, idx int, subScript []byte, hashType SigHashTyp
 	signed := 0
 	for _, addr := range addresses {
 		key, _, err := kdb.GetKey(addr)
-		if err != nil {
+		if err != nil || key == nil {
 			continue
 		}
 		sig, err := RawTxInSignature(tx, idx, subScript, hashType, key)

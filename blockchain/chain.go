@@ -355,8 +355,10 @@ type SequenceLock struct {
 //
 // This function is safe for concurrent access.
 func (b *BlockChain) CalcSequenceLock(tx *btcutil.Tx, utxoView *UtxoViewpoint, mempool bool) (*SequenceLock, error) {
-	b.chainLock.Lock()
-	defer b.chainLock.Unlock()
+	b.chainLock.RLock()
+
+
+	defer b.chainLock.RUnlock()
 
 	return b.calcSequenceLock(b.bestChain.Tip(), tx, utxoView, mempool)
 }
@@ -2012,7 +2014,9 @@ func New(config *Config) (*BlockChain, error) {
 // CachedStateSize returns the total size of the cached state of the blockchain
 // in bytes.
 func (b *BlockChain) CachedStateSize() uint64 {
-	b.chainLock.Lock()
-	defer b.chainLock.Unlock()
+	b.chainLock.RLock()
+
+
+	defer b.chainLock.RUnlock()
 	return b.utxoCache.totalMemoryUsage()
 }

@@ -3694,6 +3694,9 @@ func handleSignRawTransactions(s *rpcServer, cmd interface{}, closeChan <-chan s
 
 	for outPoint, _ := range requested {
 		e := view.LookupEntry(outPoint)
+		if e == nil {
+			continue
+		}
 		inputs[outPoint] = e.PkScript()
 	}
 

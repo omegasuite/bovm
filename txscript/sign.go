@@ -249,6 +249,10 @@ func signMultiSig(tx *wire.MsgTx, idx int, subScript []byte, hashType SigHashTyp
 
 	}
 
+	if signed == 0 {
+		return nil, false
+	}
+
 	script, _ := builder.Script()
 	return script, signed == nRequired
 }
@@ -267,7 +271,7 @@ func sign(chainParams *chaincfg.Params, tx *wire.MsgTx, idx int,
 	case PubKeyTy:
 		// look up key for address
 		key, _, err := kdb.GetKey(addresses[0])
-		if err != nil {
+		if err != nil || key == nil {
 			return nil, class, nil, 0, err
 		}
 
@@ -281,7 +285,7 @@ func sign(chainParams *chaincfg.Params, tx *wire.MsgTx, idx int,
 	case PubKeyHashTy:
 		// look up key for address
 		key, compressed, err := kdb.GetKey(addresses[0])
-		if err != nil {
+		if err != nil || key == nil {
 			return nil, class, nil, 0, err
 		}
 
@@ -294,7 +298,7 @@ func sign(chainParams *chaincfg.Params, tx *wire.MsgTx, idx int,
 		return script, class, addresses, nrequired, nil
 	case ScriptHashTy:
 		script, err := sdb.GetScript(addresses[0])
-		if err != nil {
+		if err != nil || script == nil {
 			return nil, class, nil, 0, err
 		}
 
@@ -565,13 +569,17 @@ func SignTxOutput(chainParams *chaincfg.Params, tx *wire.MsgTx, idx int,
 		if err != nil {
 			return nil, err
 		}
+		if realSigScript != nil {
 
-		// Append the p2sh script as the last push in the script.
-		builder := NewScriptBuilder()
-		builder.AddOps(realSigScript)
-		builder.AddData(sigScript)
+			// Append the p2sh script as the last push in the script.
+			builder := NewScriptBuilder()
+			builder.AddOps(realSigScript)
+			builder.AddData(sigScript)
 
-		sigScript, _ = builder.Script()
+			sigScript, _ = builder.Script()
+		} else {
+			sigScript = nil
+		}
 		// TODO keep a copy of the script for merging.
 	}
 

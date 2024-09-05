@@ -5,7 +5,11 @@
 package btcec
 
 import (
+	"crypto/ecdsa"
+
 	secp "github.com/decred/dcrd/dcrec/secp256k1/v4"
+	"math/big"
+	"reflect"
 )
 
 // PrivateKey wraps an ecdsa.PrivateKey as a convenience mainly for signing
@@ -19,6 +23,25 @@ func PrivKeyFromBytes(pk []byte) (*PrivateKey, *PublicKey) {
 	privKey := secp.PrivKeyFromBytes(pk)
 
 	return privKey, privKey.PubKey()
+}
+
+func ConvertPrivateKey(key ecdsa.PrivateKey) *secp.PrivateKey {
+
+	var scalar secp.ModNScalar
+
+	scalarValue := reflect.ValueOf(&scalar).Elem()
+	nField := scalarValue.FieldByName("n")
+
+	bigInt := new(big.Int).SetBytes(key.D.Bytes())
+	for i := 0; i < 8; i++ {
+		nField.Index(i).SetUint(uint64(bigInt.Bits()[i]))
+	}
+
+	privKey := &secp.PrivateKey{
+		Key: scalar,
+	}
+
+	return privKey
 }
 
 // NewPrivateKey is a wrapper for ecdsa.GenerateKey that returns a PrivateKey

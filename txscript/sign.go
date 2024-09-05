@@ -6,7 +6,7 @@ package txscript
 
 import (
 	"errors"
-
+	"fmt"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/btcsuite/btcd/btcutil"
@@ -220,6 +220,51 @@ func p2pkSignatureScript(tx *wire.MsgTx, idx int, subScript []byte, hashType Sig
 	return NewScriptBuilder().AddData(sig).Script()
 }
 
+func SignWitnessMultiSig(tx *wire.MsgTx, chainParams *chaincfg.Params, inputIndex int, amount int64, subScript []byte, prevOutputs PrevOutputFetcher, kdb KeyDB, sdb ScriptDB, hashType SigHashType) (wire.TxWitness, error) {
+	//计算交易的签名哈希
+	sigHashes := NewTxSigHashes(tx, prevOutputs)
+
+	//提取公钥脚本地址和要求的签名数
+	_, addresses, nRequired, err := ExtractPkScriptAddrs(subScript, chainParams)
+	if err != nil {
+		return nil, fmt.Errorf("failed to extract addresses from script: %v", err)
+	}
+
+	//从脚本数据库中获取赎回脚本
+	redeemScript, err := sdb.GetScript(addresses[0])
+	if err != nil || redeemScript == nil {
+		return nil, fmt.Errorf("failed to get redeem script for address %s: %v", addresses[0], err)
+	}
+
+	signatures := make([][]byte, 0, nRequired)
+	for _, addr := range addresses {
+		key, _, err := kdb.GetKey(addr)
+		if err != nil || key == nil {
+			continue
+		}
+
+		signature, err := RawTxInWitnessSignature(tx, sigHashes, inputIndex, amount, redeemScript, hashType, key)
+		if err != nil {
+			continue
+		}
+		signatures = append(signatures, signature)
+
+		if len(signatures) == nRequired {
+			break
+		}
+	}
+
+	if len(signatures) < nRequired {
+		return nil, fmt.Errorf("not enough signatures, required: %d, got: %d", nRequired, len(signatures))
+	}
+
+	witness := wire.TxWitness{nil}
+	witness = append(witness, signatures...)
+	witness = append(witness, redeemScript)
+
+	return witness, nil
+}
+
 // signMultiSig signs as many of the outputs in the provided multisig script as
 // possible. It returns the generated script and a boolean if the script fulfils
 // the contract (i.e. nrequired signatures are provided).  Since it is arguably
@@ -307,6 +352,12 @@ func sign(chainParams *chaincfg.Params, tx *wire.MsgTx, idx int,
 		script, _ := signMultiSig(tx, idx, subScript, hashType,
 			addresses, nrequired, kdb)
 		return script, class, addresses, nrequired, nil
+	//case WitnessV0ScriptHashTy:
+	//	script, err := sdb.GetScript(addresses[0])
+	//	if err != nil || script == nil {
+	//		return nil, class, nil, 0, err
+	//	}
+	//	return script, class, addresses, nrequired, nil
 	case NullDataTy:
 		return nil, class, nil, 0,
 			errors.New("can't sign NULLDATA transactions")

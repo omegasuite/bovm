@@ -3521,6 +3521,26 @@ func (s *rpcServer) SignTransaction(tx *wire.MsgTx, hashType txscript.SigHashTyp
 			return nil, nil
 		})
 
+		// 检查是否为见证交易输入
+		isWitness := txIn.Witness != nil && len(txIn.Witness) > 0
+
+		if isWitness {
+
+			// 调用 SignWitnessMultiSigScript 进行见证签名
+			witness, err := txscript.SignWitnessMultiSig(tx, chainParams, i, tmp.Amount(), prevOutScript, txscript.PrevOutputFetcher(view), getKey, getScript, hashType)
+			if err != nil {
+				signErrors = append(signErrors, SignatureError{
+					InputIndex: uint32(i),
+					Error:      err,
+				})
+				continue
+			}
+
+			// 将生成的 witness 设置到交易输入中
+			txIn.Witness = witness
+			continue
+		}
+
 		// SigHashSingle inputs can only be signed if there's a
 		// corresponding output. However this could be already signed,
 		// so we always verify the output.

@@ -523,6 +523,19 @@ func messageToHex(msg wire.Message) (string, error) {
 	return hex.EncodeToString(buf.Bytes()), nil
 }
 
+func RedeemScriptToP2WSH(pkScript []byte, chainParams *chaincfg.Params) (string, error) {
+	shaHash := sha256.Sum256(pkScript)
+
+	address, err := btcutil.NewAddressWitnessScriptHash(shaHash[:], chainParams)
+	if err != nil {
+		return "", err
+	}
+
+	addressBech32 := address.EncodeAddress()
+
+	return addressBech32, nil
+}
+
 // handleCreateRawTransaction handles createrawtransaction commands.
 func handleCreateRawTransaction(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
 	c := cmd.(*btcjson.CreateRawTransactionCmd)
@@ -585,6 +598,7 @@ func handleCreateRawTransaction(s *rpcServer, cmd interface{}, closeChan <-chan 
 		switch addr.(type) {
 		case *btcutil.AddressPubKeyHash:
 		case *btcutil.AddressScriptHash:
+		case *btcutil.AddressWitnessScriptHash:
 		default:
 			return nil, &btcjson.RPCError{
 				Code:    btcjson.ErrRPCInvalidAddressOrKey,
@@ -605,7 +619,11 @@ func handleCreateRawTransaction(s *rpcServer, cmd interface{}, closeChan <-chan 
 		if payToL2 {
 			var h [20]byte
 			copy(h[:], addr.ScriptAddress())
-			pkScript, _ = treasury.Get75pctMSScript(h)
+			pkScript, _ = treasury.Create75pctMSScript(h)
+			witnessadress, _ := RedeemScriptToP2WSH(pkScript, params)
+			if witnessadress == "ccc" {
+				return nil, &btcjson.RPCError{}
+			}
 		} else {
 			var err error
 			// Create a new script which pays to the provided address.
@@ -3521,13 +3539,19 @@ func (s *rpcServer) SignTransaction(tx *wire.MsgTx, hashType txscript.SigHashTyp
 			return nil, nil
 		})
 
-		// 检查是否为见证交易输入
-		isWitness := txIn.Witness != nil && len(txIn.Witness) > 0
+		// 解析输出脚本类型
+		scriptClass, address, nrequired, err := txscript.ExtractPkScriptAddrs(prevOutScript, chainParams)
+		if err != nil {
+			signErrors = append(signErrors, SignatureError{
+				InputIndex: uint32(i),
+				Error:      err,
+			})
+			continue
+		}
 
-		if isWitness {
-
-			// 调用 SignWitnessMultiSigScript 进行见证签名
-			witness, err := txscript.SignWitnessMultiSig(tx, chainParams, i, tmp.Amount(), prevOutScript, txscript.PrevOutputFetcher(view), getKey, getScript, hashType)
+		if scriptClass == txscript.WitnessV0ScriptHashTy {
+			// 签名 P2WSH 交易并生成见证数据
+			witnessScript, err := txscript.SignWitnessMultiSig(tx, i, tmp.Amount(), txscript.PrevOutputFetcher(view), getKey, getScript, hashType, address, nrequired)
 			if err != nil {
 				signErrors = append(signErrors, SignatureError{
 					InputIndex: uint32(i),
@@ -3535,9 +3559,8 @@ func (s *rpcServer) SignTransaction(tx *wire.MsgTx, hashType txscript.SigHashTyp
 				})
 				continue
 			}
-
-			// 将生成的 witness 设置到交易输入中
-			txIn.Witness = witness
+			// 设置见证数据
+			txIn.Witness = witnessScript
 			continue
 		}
 
@@ -3651,6 +3674,12 @@ func handleSignRawTransactions(s *rpcServer, cmd interface{}, closeChan <-chan s
 
 			case param.ScriptHashAddrID:
 				addr, err := btcutil.NewAddressScriptHash(redeemScript[1:], param)
+				if err != nil {
+					return nil, err
+				}
+				scripts[addr.String()] = redeemScript[1:]
+			case param.WitnessScriptHashAddrID:
+				addr, err := btcutil.NewAddressWitnessScriptHash(redeemScript[1:], param)
 				if err != nil {
 					return nil, err
 				}

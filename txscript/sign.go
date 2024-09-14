@@ -220,17 +220,10 @@ func p2pkSignatureScript(tx *wire.MsgTx, idx int, subScript []byte, hashType Sig
 	return NewScriptBuilder().AddData(sig).Script()
 }
 
-func SignWitnessMultiSig(tx *wire.MsgTx, chainParams *chaincfg.Params, inputIndex int, amount int64, subScript []byte, prevOutputs PrevOutputFetcher, kdb KeyDB, sdb ScriptDB, hashType SigHashType) (wire.TxWitness, error) {
-	//计算交易的签名哈希
+func SignWitnessMultiSig(tx *wire.MsgTx, inputIndex int, amount int64, prevOutputs PrevOutputFetcher, kdb KeyDB, sdb ScriptDB, hashType SigHashType, addresses []btcutil.Address, nRequired int) (wire.TxWitness, error) {
+
 	sigHashes := NewTxSigHashes(tx, prevOutputs)
 
-	//提取公钥脚本地址和要求的签名数
-	_, addresses, nRequired, err := ExtractPkScriptAddrs(subScript, chainParams)
-	if err != nil {
-		return nil, fmt.Errorf("failed to extract addresses from script: %v", err)
-	}
-
-	//从脚本数据库中获取赎回脚本
 	redeemScript, err := sdb.GetScript(addresses[0])
 	if err != nil || redeemScript == nil {
 		return nil, fmt.Errorf("failed to get redeem script for address %s: %v", addresses[0], err)

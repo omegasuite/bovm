@@ -619,7 +619,8 @@ func handleCreateRawTransaction(s *rpcServer, cmd interface{}, closeChan <-chan 
 		if payToL2 {
 			var h [20]byte
 			copy(h[:], addr.ScriptAddress())
-			pkScript, _ = treasury.Create75pctMSScript(h)
+			pkScript, _ = treasury.Get75pctMSScript(h)
+			fmt.Println(pkScript)
 			witnessadress, _ := RedeemScriptToP2WSH(pkScript, params)
 			if witnessadress == "ccc" {
 				return nil, &btcjson.RPCError{}
@@ -3527,6 +3528,7 @@ func (s *rpcServer) SignTransaction(tx *wire.MsgTx, hashType txscript.SigHashTyp
 			}
 			return nil, false, nil
 		})
+
 		getScript := txscript.ScriptClosure(func(addr btcutil.Address) ([]byte, error) {
 			// If keys were provided then we can only use the
 			// redeem scripts provided with our inputs, too.
@@ -3540,7 +3542,7 @@ func (s *rpcServer) SignTransaction(tx *wire.MsgTx, hashType txscript.SigHashTyp
 		})
 
 		// 解析输出脚本类型
-		scriptClass, address, nrequired, err := txscript.ExtractPkScriptAddrs(prevOutScript, chainParams)
+		scriptClass, address, _, err := txscript.ExtractPkScriptAddrs(prevOutScript, chainParams)
 		if err != nil {
 			signErrors = append(signErrors, SignatureError{
 				InputIndex: uint32(i),
@@ -3551,7 +3553,7 @@ func (s *rpcServer) SignTransaction(tx *wire.MsgTx, hashType txscript.SigHashTyp
 
 		if scriptClass == txscript.WitnessV0ScriptHashTy {
 			// 签名 P2WSH 交易并生成见证数据
-			witnessScript, err := txscript.SignWitnessMultiSig(tx, i, tmp.Amount(), txscript.PrevOutputFetcher(view), getKey, getScript, hashType, address, nrequired)
+			witnessScript, err := txscript.SignWitnessMultiSig(tx, i, tmp.Amount(), txscript.PrevOutputFetcher(view), getKey, getScript, hashType, address, chainParams, txIn.Witness)
 			if err != nil {
 				signErrors = append(signErrors, SignatureError{
 					InputIndex: uint32(i),
@@ -3559,7 +3561,6 @@ func (s *rpcServer) SignTransaction(tx *wire.MsgTx, hashType txscript.SigHashTyp
 				})
 				continue
 			}
-			// 设置见证数据
 			txIn.Witness = witnessScript
 			continue
 		}
@@ -3679,7 +3680,8 @@ func handleSignRawTransactions(s *rpcServer, cmd interface{}, closeChan <-chan s
 				}
 				scripts[addr.String()] = redeemScript[1:]
 			case param.WitnessScriptHashAddrID:
-				addr, err := btcutil.NewAddressWitnessScriptHash(redeemScript[1:], param)
+				shaHash := sha256.Sum256(redeemScript[1:])
+				addr, err := btcutil.NewAddressWitnessScriptHash(shaHash[:], param)
 				if err != nil {
 					return nil, err
 				}
@@ -3707,7 +3709,10 @@ func handleSignRawTransactions(s *rpcServer, cmd interface{}, closeChan <-chan s
 		requested[txIn.PreviousOutPoint] = struct{}{}
 	}
 
-	view, _ := s.cfg.Chain.FetchUtxoView(btcutil.NewTx(&tx))
+	view, err := s.cfg.Chain.FetchUtxoView(btcutil.NewTx(&tx))
+	if err != nil {
+		return nil, err
+	}
 
 	// Parse list of private keys, if present. If there are any keys here
 	// they are the keys that we may use for signing. If empty we will

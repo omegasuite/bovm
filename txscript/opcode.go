@@ -2299,6 +2299,12 @@ func opcodeCheckMultiSig(op *opcode, data []byte, vm *Engine) error {
 	// Get script starting from the most recent OP_CODESEPARATOR.
 	script := vm.subScript()
 
+	//builder := NewScriptBuilder().AddOp(OP_0)
+	//builder.AddOp(OP_DATA_32)
+	//builder.AddOps(oldscript)
+	//
+	//script, _ := builder.Script()
+
 	// Remove the signature in pre version 0 segwit scripts since there is
 	// no way for a signature to sign itself.
 	if !vm.isWitnessVersionActive(0) {

@@ -6,7 +6,7 @@ package txscript
 
 import (
 	"errors"
-
+	"fmt"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/btcsuite/btcd/btcutil"
@@ -220,6 +220,58 @@ func p2pkSignatureScript(tx *wire.MsgTx, idx int, subScript []byte, hashType Sig
 	return NewScriptBuilder().AddData(sig).Script()
 }
 
+func SignWitnessMultiSig(tx *wire.MsgTx, inputIndex int, amount int64, prevOutputs PrevOutputFetcher, kdb KeyDB, sdb ScriptDB, hashType SigHashType, addresses []btcutil.Address, chainParams *chaincfg.Params, prevwitness wire.TxWitness) ([][]byte, error) {
+
+	sigHashes := NewTxSigHashes(tx, prevOutputs)
+
+	redeemScript, err := sdb.GetScript(addresses[0])
+	if err != nil || redeemScript == nil {
+		return nil, fmt.Errorf("failed to get redeem script for address %s: %v", addresses[0], err)
+	}
+
+	sigclass, realaddresses, nRequired, err := ExtractPkScriptAddrs(redeemScript, chainParams)
+
+	builder := NewScriptBuilder()
+
+	signed := 0
+	var sigscript []byte // 提前声明 sigscript
+
+	if sigclass == MultiSigTy {
+		for _, addr := range realaddresses {
+			key, _, err := kdb.GetKey(addr)
+			if err != nil || key == nil {
+				continue
+			}
+
+			signature, err := RawTxInWitnessSignature(tx, sigHashes, inputIndex, amount, redeemScript, hashType, key)
+			if err != nil {
+				continue
+			}
+			builder.AddOps(signature)
+			signed++
+			if signed == nRequired {
+				break
+			}
+		}
+		if signed == 0 {
+			sigscript = nil
+		} else {
+			sigscript, _ = builder.Script()
+		} // 不再重新声明 sigscript
+
+		witness := make([][]byte, 0, 1)
+		witness = append(witness, []byte{})
+		witness = append(witness, sigscript)
+		witness = append(witness, redeemScript)
+
+		finalwitness := MergeWitnessMultiSig(tx, inputIndex, realaddresses, redeemScript, witness, prevwitness, amount, sigHashes)
+
+		return finalwitness, nil
+	}
+
+	return nil, fmt.Errorf("unsupported script type: %v", sigclass)
+}
+
 // signMultiSig signs as many of the outputs in the provided multisig script as
 // possible. It returns the generated script and a boolean if the script fulfils
 // the contract (i.e. nrequired signatures are provided).  Since it is arguably
@@ -306,6 +358,12 @@ func sign(chainParams *chaincfg.Params, tx *wire.MsgTx, idx int,
 	case MultiSigTy:
 		script, _ := signMultiSig(tx, idx, subScript, hashType,
 			addresses, nrequired, kdb)
+		return script, class, addresses, nrequired, nil
+	case WitnessV0ScriptHashTy:
+		script, err := sdb.GetScript(addresses[0])
+		if err != nil || script == nil {
+			return nil, class, nil, 0, err
+		}
 		return script, class, addresses, nrequired, nil
 	case NullDataTy:
 		return nil, class, nil, 0,
@@ -438,16 +496,93 @@ sigLoop:
 	return script
 }
 
-// mergeScripts merges sigScript and prevScript assuming they are both
-// partial solutions for pkScript spending output idx of tx. class, addresses
-// and nrequired are the result of extracting the addresses from pkscript.
-// The return value is the best effort merging of the two scripts. Calling this
-// function with addresses, class and nrequired that do not match pkScript is
-// an error and results in undefined behaviour.
-//
-// NOTE: This function is only valid for version 0 scripts.  Since the function
-// does not accept a script version, the results are undefined for other script
-// versions.
+func MergeWitnessMultiSig(tx *wire.MsgTx, idx int, addresses []btcutil.Address,
+	pkScript []byte, witness [][]byte, prevWitness [][]byte, amount int64, sighashes *TxSigHashes) [][]byte {
+
+	// 如果新的或者之前的 witness 为空，则直接返回另一个
+	if len(witness) == 0 {
+		return prevWitness
+	}
+	if len(prevWitness) == 0 {
+		return witness
+	}
+
+	// 函数从 witness 的第二个到倒数第二个数据中提取签名
+	var possibleSigs [][]byte
+	extractWitnessSigs := func(w [][]byte) error {
+		if len(w) > 2 {
+			for _, data := range w[1 : len(w)-1] {
+				if len(data) != 0 {
+					possibleSigs = append(possibleSigs, data)
+				}
+			}
+		}
+		return nil
+	}
+
+	// 提取新 witness 和之前的 witness 的签名
+	if err := extractWitnessSigs(witness); err != nil {
+		return prevWitness
+	}
+	if err := extractWitnessSigs(prevWitness); err != nil {
+		return witness
+	}
+
+	// 存储地址对应的签名
+	addrToSig := make(map[string][]byte)
+
+sigLoop:
+	for _, sig := range possibleSigs {
+
+		// 确保签名至少有 hash type 字节
+		if len(sig) < 1 {
+			continue
+		}
+		tSig := sig[:len(sig)-1]
+		hashType := SigHashType(sig[len(sig)-1])
+
+		// 解析 DER 格式的签名
+		pSig, err := ecdsa.ParseDERSignature(tSig)
+		if err != nil {
+			continue
+		}
+
+		// 计算签名哈希
+		hash, _ := CalcWitnessSigHash(pkScript, sighashes, hashType, tx, idx, amount)
+
+		// 验证签名是否与公钥匹配
+		for _, addr := range addresses {
+			pkaddr := addr.(*btcutil.AddressPubKey)
+			pubKey := pkaddr.PubKey()
+
+			if pSig.Verify(hash, pubKey) {
+				aStr := addr.EncodeAddress()
+				if _, ok := addrToSig[aStr]; !ok {
+					addrToSig[aStr] = sig
+				}
+				continue sigLoop
+			}
+		}
+	}
+
+	// 构建最终的合并 witness
+	finalWitness := make([][]byte, 0, len(addresses)+2)
+	finalWitness = append(finalWitness, []byte{}) // P2WSH 的初始空元素
+
+	// 按照地址顺序将签名插入 witness
+	for _, addr := range addresses {
+		aStr := addr.EncodeAddress()
+		if sig, ok := addrToSig[aStr]; ok {
+			finalWitness = append(finalWitness, sig)
+		}
+	}
+
+	// 在 witness 的最后追加 redeem script
+	finalWitness = append(finalWitness, pkScript)
+
+	return finalWitness
+}
+
 func mergeScripts(chainParams *chaincfg.Params, tx *wire.MsgTx, idx int,
 	pkScript []byte, class ScriptClass, addresses []btcutil.Address,
 	nRequired int, sigScript, prevScript []byte) []byte {
@@ -483,6 +618,43 @@ func mergeScripts(chainParams *chaincfg.Params, tx *wire.MsgTx, idx int,
 		// therefore the error is ignored.
 		class, addresses, nrequired, _ :=
 			ExtractPkScriptAddrs(script, chainParams)
+
+		// Merge
+		mergedScript := mergeScripts(chainParams, tx, idx, script,
+			class, addresses, nrequired, sigScript, prevScript)
+
+		// Reappend the script and return the result.
+		builder := NewScriptBuilder()
+		builder.AddOps(mergedScript)
+		builder.AddData(script)
+		finalScript, _ := builder.Script()
+		return finalScript
+
+	case WitnessV0ScriptHashTy:
+		// Nothing to merge if either the new or previous signature
+		// scripts are empty or fail to parse.
+		if len(sigScript) == 0 ||
+			checkScriptParses(scriptVersion, sigScript) != nil {
+
+			return prevScript
+		}
+		if len(prevScript) == 0 ||
+			checkScriptParses(scriptVersion, prevScript) != nil {
+
+			return sigScript
+		}
+
+		// Remove the last push in the script and then recurse.
+		// this could be a lot less inefficient.
+		//
+		// Assume that final script is the correct one since it was just
+		// made and it is a pay-to-witness-v0-script-hash.
+		script := finalOpcodeData(scriptVersion, sigScript)
+
+		// We already know this information somewhere up the stack,
+		// therefore the error is ignored.
+		class, addresses, nrequired, _ :=
+			ExtractPkScriptAddrs(script[2:], chainParams)
 
 		// Merge
 		mergedScript := mergeScripts(chainParams, tx, idx, script,
@@ -556,6 +728,7 @@ func SignTxOutput(chainParams *chaincfg.Params, tx *wire.MsgTx, idx int,
 	pkScript []byte, hashType SigHashType, kdb KeyDB, sdb ScriptDB,
 	previousScript []byte) ([]byte, error) {
 
+	//这个sigScript是赎回脚本
 	sigScript, class, addresses, nrequired, err := sign(chainParams, tx,
 		idx, pkScript, hashType, kdb, sdb)
 	if err != nil {

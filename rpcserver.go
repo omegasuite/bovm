@@ -129,6 +129,12 @@ var (
 	}
 )
 
+type CreateRawTransactionResponse struct {
+	TransactionHex string `json:"transactionHex"`
+	PkScript       string `json:"pkScript"`
+	WitnessAddress string `json:"witnessAddress"`
+}
+
 type commandHandler func(*rpcServer, interface{}, <-chan struct{}) (interface{}, error)
 
 // rpcHandlers maps RPC command strings to appropriate handler functions.
@@ -523,6 +529,19 @@ func messageToHex(msg wire.Message) (string, error) {
 	return hex.EncodeToString(buf.Bytes()), nil
 }
 
+func RedeemScriptToP2WSH(pkScript []byte, chainParams *chaincfg.Params) (string, error) {
+	shaHash := sha256.Sum256(pkScript)
+
+	address, err := btcutil.NewAddressWitnessScriptHash(shaHash[:], chainParams)
+	if err != nil {
+		return "", err
+	}
+
+	addressBech32 := address.EncodeAddress()
+
+	return addressBech32, nil
+}
+
 // handleCreateRawTransaction handles createrawtransaction commands.
 func handleCreateRawTransaction(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
 	c := cmd.(*btcjson.CreateRawTransactionCmd)
@@ -585,6 +604,7 @@ func handleCreateRawTransaction(s *rpcServer, cmd interface{}, closeChan <-chan 
 		switch addr.(type) {
 		case *btcutil.AddressPubKeyHash:
 		case *btcutil.AddressScriptHash:
+		case *btcutil.AddressWitnessScriptHash:
 		default:
 			return nil, &btcjson.RPCError{
 				Code:    btcjson.ErrRPCInvalidAddressOrKey,
@@ -601,11 +621,17 @@ func handleCreateRawTransaction(s *rpcServer, cmd interface{}, closeChan <-chan 
 		}
 
 		var pkScript []byte
+		var witnessadress string
 
 		if payToL2 {
 			var h [20]byte
 			copy(h[:], addr.ScriptAddress())
 			pkScript, _ = treasury.Get75pctMSScript(h)
+			fmt.Println(pkScript)
+			witnessadress, _ = RedeemScriptToP2WSH(pkScript, params)
+			if witnessadress == "ccc" {
+				return nil, &btcjson.RPCError{}
+			}
 		} else {
 			var err error
 			// Create a new script which pays to the provided address.
@@ -647,6 +673,13 @@ func handleCreateRawTransaction(s *rpcServer, cmd interface{}, closeChan <-chan 
 	if err != nil {
 		return nil, err
 	}
+
+	//response := CreateRawTransactionResponse{
+	//	TransactionHex: mtxHex,
+	//	PkScript:       hex.EncodeToString(pkScript),
+	//	WitnessAddress: witnessadress,
+	//}
+
 	return mtxHex, nil
 }
 
@@ -3509,6 +3542,7 @@ func (s *rpcServer) SignTransaction(tx *wire.MsgTx, hashType txscript.SigHashTyp
 			}
 			return nil, false, nil
 		})
+
 		getScript := txscript.ScriptClosure(func(addr btcutil.Address) ([]byte, error) {
 			// If keys were provided then we can only use the
 			// redeem scripts provided with our inputs, too.
@@ -3520,6 +3554,30 @@ func (s *rpcServer) SignTransaction(tx *wire.MsgTx, hashType txscript.SigHashTyp
 			}
 			return nil, nil
 		})
+
+		// 解析输出脚本类型
+		scriptClass, address, _, err := txscript.ExtractPkScriptAddrs(prevOutScript, chainParams)
+		if err != nil {
+			signErrors = append(signErrors, SignatureError{
+				InputIndex: uint32(i),
+				Error:      err,
+			})
+			continue
+		}
+
+		if scriptClass == txscript.WitnessV0ScriptHashTy {
+			// 签名 P2WSH 交易并生成见证数据
+			witnessScript, err := txscript.SignWitnessMultiSig(tx, i, tmp.Amount(), txscript.PrevOutputFetcher(view), getKey, getScript, hashType, address, chainParams, txIn.Witness)
+			if err != nil {
+				signErrors = append(signErrors, SignatureError{
+					InputIndex: uint32(i),
+					Error:      err,
+				})
+				continue
+			}
+			txIn.Witness = witnessScript
+			continue
+		}
 
 		// SigHashSingle inputs can only be signed if there's a
 		// corresponding output. However this could be already signed,
@@ -3635,6 +3693,13 @@ func handleSignRawTransactions(s *rpcServer, cmd interface{}, closeChan <-chan s
 					return nil, err
 				}
 				scripts[addr.String()] = redeemScript[1:]
+			case param.WitnessScriptHashAddrID:
+				shaHash := sha256.Sum256(redeemScript[1:])
+				addr, err := btcutil.NewAddressWitnessScriptHash(shaHash[:], param)
+				if err != nil {
+					return nil, err
+				}
+				scripts[addr.String()] = redeemScript[1:]
 			}
 		}
 		if inputHash != nil && script != nil {
@@ -3658,7 +3723,10 @@ func handleSignRawTransactions(s *rpcServer, cmd interface{}, closeChan <-chan s
 		requested[txIn.PreviousOutPoint] = struct{}{}
 	}
 
-	view, _ := s.cfg.Chain.FetchUtxoView(btcutil.NewTx(&tx))
+	view, err := s.cfg.Chain.FetchUtxoView(btcutil.NewTx(&tx))
+	if err != nil {
+		return nil, err
+	}
 
 	// Parse list of private keys, if present. If there are any keys here
 	// they are the keys that we may use for signing. If empty we will

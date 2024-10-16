@@ -129,6 +129,12 @@ var (
 	}
 )
 
+type CreateRawTransactionResponse struct {
+	TransactionHex string `json:"transactionHex"`
+	PkScript       string `json:"pkScript"`
+	WitnessAddress string `json:"witnessAddress"`
+}
+
 type commandHandler func(*rpcServer, interface{}, <-chan struct{}) (interface{}, error)
 
 // rpcHandlers maps RPC command strings to appropriate handler functions.
@@ -615,13 +621,14 @@ func handleCreateRawTransaction(s *rpcServer, cmd interface{}, closeChan <-chan 
 		}
 
 		var pkScript []byte
+		var witnessadress string
 
 		if payToL2 {
 			var h [20]byte
 			copy(h[:], addr.ScriptAddress())
 			pkScript, _ = treasury.Get75pctMSScript(h)
 			fmt.Println(pkScript)
-			witnessadress, _ := RedeemScriptToP2WSH(pkScript, params)
+			witnessadress, _ = RedeemScriptToP2WSH(pkScript, params)
 			if witnessadress == "ccc" {
 				return nil, &btcjson.RPCError{}
 			}
@@ -666,6 +673,13 @@ func handleCreateRawTransaction(s *rpcServer, cmd interface{}, closeChan <-chan 
 	if err != nil {
 		return nil, err
 	}
+
+	//response := CreateRawTransactionResponse{
+	//	TransactionHex: mtxHex,
+	//	PkScript:       hex.EncodeToString(pkScript),
+	//	WitnessAddress: witnessadress,
+	//}
+
 	return mtxHex, nil
 }
 

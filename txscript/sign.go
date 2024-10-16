@@ -264,7 +264,7 @@ func SignWitnessMultiSig(tx *wire.MsgTx, inputIndex int, amount int64, prevOutpu
 		witness = append(witness, sigscript)
 		witness = append(witness, redeemScript)
 
-		finalwitness := mergeWitnessMultiSig(tx, inputIndex, realaddresses, redeemScript, witness, prevwitness, amount, sigHashes)
+		finalwitness := MergeWitnessMultiSig(tx, inputIndex, realaddresses, redeemScript, witness, prevwitness, amount, sigHashes)
 
 		return finalwitness, nil
 	}
@@ -496,7 +496,7 @@ sigLoop:
 	return script
 }
 
-func mergeWitnessMultiSig(tx *wire.MsgTx, idx int, addresses []btcutil.Address,
+func MergeWitnessMultiSig(tx *wire.MsgTx, idx int, addresses []btcutil.Address,
 	pkScript []byte, witness [][]byte, prevWitness [][]byte, amount int64, sighashes *TxSigHashes) [][]byte {
 
 	// 如果新的或者之前的 witness 为空，则直接返回另一个

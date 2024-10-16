@@ -187,6 +187,7 @@ type config struct {
 	whitelists           []*net.IPNet
 
 	Accounts bool `long:"accounts" description:"List accounts and balanced"`
+	Clear    int  `long:"clear" description:"Clear DB"`
 }
 
 // serviceOptions defines the configuration options for the daemon as a service on

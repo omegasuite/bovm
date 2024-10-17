@@ -14,7 +14,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	treasury "github.com/btcsuite/btcd/btc2omg/btcd/treasury"
 	"github.com/btcsuite/btcd/btcec"
 	"io"
 	"io/ioutil"
@@ -626,9 +625,9 @@ func handleCreateRawTransaction(s *rpcServer, cmd interface{}, closeChan <-chan 
 		if payToL2 {
 			var h [20]byte
 			copy(h[:], addr.ScriptAddress())
-			pkScript, _ = treasury.Get75pctMSScript(h)
-			fmt.Println(pkScript)
+			//pkScript, _ = treasury.Get75pctMSScript(h)
 			witnessadress, _ = RedeemScriptToP2WSH(pkScript, params)
+			fmt.Sprintf("%v", witnessadress)
 			if witnessadress == "ccc" {
 				return nil, &btcjson.RPCError{}
 			}

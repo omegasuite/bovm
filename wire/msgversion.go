@@ -42,6 +42,9 @@ type MsgVersion struct {
 	// Address of the local peer.
 	AddrMe NetAddress
 
+	// My Rpc Port.
+	RpcPort string
+
 	// Unique value associated with message that is used to detect self
 	// connections.
 	Nonce uint64
@@ -144,6 +147,11 @@ func (msg *MsgVersion) BtcDecode(r io.Reader, pver uint32, enc MessageEncoding) 
 		msg.DisableRelayTx = !relayTx
 	}
 
+	msg.RpcPort, err = ReadVarString(r, pver)
+	if err != nil {
+		msg.RpcPort = "8334"
+	}
+
 	return nil
 }
 
@@ -195,6 +203,11 @@ func (msg *MsgVersion) BtcEncode(w io.Writer, pver uint32, enc MessageEncoding) 
 			return err
 		}
 	}
+
+	err = WriteVarBytes(w, pver, []byte(msg.RpcPort))
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -213,7 +226,7 @@ func (msg *MsgVersion) MaxPayloadLength(pver uint32) uint32 {
 	// remote and local net addresses + nonce 8 bytes + length of user
 	// agent (varInt) + max allowed useragent length + last block 4 bytes +
 	// relay transactions flag 1 byte.
-	return 33 + (maxNetAddressPayload(pver) * 2) + MaxVarIntPayload +
+	return 46 + (maxNetAddressPayload(pver) * 2) + MaxVarIntPayload +
 		MaxUserAgentLen
 }
 
@@ -235,6 +248,7 @@ func NewMsgVersion(me *NetAddress, you *NetAddress, nonce uint64,
 		UserAgent:       DefaultUserAgent,
 		LastBlock:       lastBlock,
 		DisableRelayTx:  false,
+		RpcPort:         "8334",
 	}
 }
 

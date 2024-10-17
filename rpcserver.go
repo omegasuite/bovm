@@ -144,6 +144,7 @@ var rpcHandlers map[string]commandHandler
 var rpcHandlersBeforeInit = map[string]commandHandler{
 	"addnode":                handleAddNode,
 	"createrawtransaction":   handleCreateRawTransaction,
+	"crt":                    handleCreateRawTransaction,
 	"debuglevel":             handleDebugLevel,
 	"decoderawtransaction":   handleDecodeRawTransaction,
 	"decodescript":           handleDecodeScript,
@@ -152,10 +153,14 @@ var rpcHandlersBeforeInit = map[string]commandHandler{
 	"getaddednodeinfo":       handleGetAddedNodeInfo,
 	"getbestblock":           handleGetBestBlock,
 	"getbestblockhash":       handleGetBestBlockHash,
+	"gbbh":                   handleGetBestBlockHash,
 	"getblock":               handleGetBlock,
-	"getblockchaininfo":      handleGetBlockChainInfo,
+	"gbk":                    handleGetBlock,
+	"gbi":                    handleGetBlockChainInfo, // Changed: get info. for both chains
 	"getblockcount":          handleGetBlockCount,
+	"gbc":                    handleGetBlockCount,
 	"getblockhash":           handleGetBlockHash,
+	"gbh":                    handleGetBlockHash,
 	"getblockheader":         handleGetBlockHeader,
 	"getblocktemplate":       handleGetBlockTemplate,
 	"getchaintips":           handleGetChainTips,
@@ -174,6 +179,7 @@ var rpcHandlersBeforeInit = map[string]commandHandler{
 	"getnetworkhashps":       handleGetNetworkHashPS,
 	"getnodeaddresses":       handleGetNodeAddresses,
 	"getpeerinfo":            handleGetPeerInfo,
+	"gps":                    handleGetPeerInfo,
 	"getrawmempool":          handleGetRawMempool,
 	"getrawtransaction":      handleGetRawTransaction,
 	"gettxout":               handleGetTxOut,
@@ -181,8 +187,10 @@ var rpcHandlersBeforeInit = map[string]commandHandler{
 	"node":                   handleNode,
 	"ping":                   handlePing,
 	"searchrawtransactions":  handleSearchRawTransactions,
+	"schrt":                  handleSearchRawTransactions,
 	"signrawtransaction":     handleSignRawTransactions,
 	"sendrawtransaction":     handleSendRawTransaction,
+	"srt":                    handleSendRawTransaction,
 	"setgenerate":            handleSetGenerate,
 	"signmessagewithprivkey": handleSignMessageWithPrivKey,
 	"stop":                   handleStop,
@@ -203,6 +211,7 @@ var rpcAskWallet = map[string]struct{}{
 	"addmultisigaddress":    {},
 	"backupwallet":          {},
 	"createencryptedwallet": {},
+	"crt":                   {},
 	"createmultisig":        {},
 	"dumpprivkey":           {},
 	"dumpwallet":            {},
@@ -271,6 +280,8 @@ var rpcLimited = map[string]struct{}{
 	"help": {},
 
 	// HTTP/S-only commands
+	"getblockchaininfo":     {}, // Changed: get info. for both chains
+	"gbi":                   {}, // Changed: get info. for both chains
 	"createrawtransaction":  {},
 	"decoderawtransaction":  {},
 	"decodescript":          {},
@@ -279,7 +290,10 @@ var rpcLimited = map[string]struct{}{
 	"getbestblockhash":      {},
 	"getblock":              {},
 	"getblockcount":         {},
+	"gbc":                   {},
 	"getblockhash":          {},
+	"gbh":                   {},
+	"getblocktxhashes":      {},
 	"getblockheader":        {},
 	"getchaintips":          {},
 	"getcfilter":            {},
@@ -294,12 +308,15 @@ var rpcLimited = map[string]struct{}{
 	"getrawtransaction":     {},
 	"gettxout":              {},
 	"searchrawtransactions": {},
+	"schrt":                 {},
 	"sendrawtransaction":    {},
+	"srt":                   {},
 	"submitblock":           {},
 	"uptime":                {},
 	"validateaddress":       {},
 	"verifymessage":         {},
 	"version":               {},
+	"gps":                   {},
 }
 
 // builderScript is a convenience function which is used for hard-coded scripts
@@ -4984,9 +5001,19 @@ func (s *rpcServer) Start() {
 		ReadTimeout: time.Second * rpcAuthTimeoutSeconds,
 	}
 	rpcServeMux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Connection", "close")
-		w.Header().Set("Content-Type", "application/json")
-		r.Close = true
+		if r.Method == "OPTIONS" {
+			w.Header().Set("Connection", "keep-alive")
+			w.Header().Set("Access-Control-Allow-Headers", "Origin, Content-Type, Accept, Authorization, Access-Control-Allow-Origin")
+			r.Close = false
+		} else {
+			w.Header().Set("Connection", "close")
+			w.Header().Set("Content-Type", "application/json")
+			r.Close = true
+		}
+
+		//		if strings.Index(r.RemoteAddr, "127.0.0.1:") == 0 || strings.Index(r.RemoteAddr, "localhost:") == 0 {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		//		}
 
 		// Limit the number of connections to max allowed.
 		if s.limitConnections(w, r.RemoteAddr) {
@@ -4996,10 +5023,15 @@ func (s *rpcServer) Start() {
 		// Keep track of the number of connected clients.
 		s.incrementClients()
 		defer s.decrementClients()
-		_, isAdmin, err := s.checkAuth(r, true)
-		if err != nil {
-			jsonAuthFail(w)
-			return
+
+		var isAdmin bool
+		if r.Method != "OPTIONS" {
+			_, admin, err := s.checkAuth(r, true)
+			if err != nil {
+				jsonAuthFail(w)
+				return
+			}
+			isAdmin = admin
 		}
 
 		// Read and respond to the request.

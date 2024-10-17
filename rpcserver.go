@@ -156,6 +156,7 @@ var rpcHandlersBeforeInit = map[string]commandHandler{
 	"gbbh":                   handleGetBestBlockHash,
 	"getblock":               handleGetBlock,
 	"gbk":                    handleGetBlock,
+	"getblockchaininfo":      handleGetBlockChainInfo, // Changed: get info. for both chains
 	"gbi":                    handleGetBlockChainInfo, // Changed: get info. for both chains
 	"getblockcount":          handleGetBlockCount,
 	"gbc":                    handleGetBlockCount,
@@ -546,19 +547,6 @@ func messageToHex(msg wire.Message) (string, error) {
 	return hex.EncodeToString(buf.Bytes()), nil
 }
 
-func RedeemScriptToP2WSH(pkScript []byte, chainParams *chaincfg.Params) (string, error) {
-	shaHash := sha256.Sum256(pkScript)
-
-	address, err := btcutil.NewAddressWitnessScriptHash(shaHash[:], chainParams)
-	if err != nil {
-		return "", err
-	}
-
-	addressBech32 := address.EncodeAddress()
-
-	return addressBech32, nil
-}
-
 // handleCreateRawTransaction handles createrawtransaction commands.
 func handleCreateRawTransaction(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
 	c := cmd.(*btcjson.CreateRawTransactionCmd)
@@ -643,12 +631,13 @@ func handleCreateRawTransaction(s *rpcServer, cmd interface{}, closeChan <-chan 
 		if payToL2 {
 			var h [20]byte
 			copy(h[:], addr.ScriptAddress())
-			pkScript, _ = treasury.Get75pctMSScript(h)
-			fmt.Println(pkScript)
-			witnessadress, _ = RedeemScriptToP2WSH(pkScript, params)
-			if witnessadress == "ccc" {
-				return nil, &btcjson.RPCError{}
+			witnessadress, _, _ = treasury.Get75pctMSScript(h)
+			addr, err = btcutil.DecodeAddress(witnessadress, s.cfg.ChainParams)
+			if err != nil {
+				return nil, err
 			}
+			pkScript = []byte{0, txscript.OP_DATA_32}
+			pkScript = append(pkScript, addr.ScriptAddress()...)
 		} else {
 			var err error
 			// Create a new script which pays to the provided address.
@@ -4794,6 +4783,41 @@ func (s *rpcServer) jsonRPCRead(w http.ResponseWriter, r *http.Request, isAdmin 
 	var results []json.RawMessage
 	var batchSize int
 	var batchedRequest bool
+
+	if r.Method == "OPTIONS" {
+		var responseID interface{}
+		var jsonErr error
+		var result interface{}
+
+		var req btcjson.Request
+		err = json.Unmarshal(body, &req)
+
+		if err != nil {
+			req.Jsonrpc = "1.0"
+		}
+
+		// Marshal the response.
+		msg, err := createMarshalledReply(req.Jsonrpc, responseID, result, jsonErr)
+		if err != nil {
+			rpcsLog.Errorf("Failed to marshal reply: %v", err)
+			return
+		}
+
+		// Write the response.
+		err = s.writeHTTPResponseHeaders(r, w.Header(), http.StatusOK, buf)
+		if err != nil {
+			rpcsLog.Error(err)
+			return
+		}
+		if _, err := buf.Write(msg); err != nil {
+			rpcsLog.Errorf("Failed to write marshalled reply: %v", err)
+		}
+
+		if err := buf.WriteByte('\n'); err != nil {
+			rpcsLog.Errorf("Failed to append terminating newline to reply: %v", err)
+		}
+		return
+	}
 
 	// Determine request type
 	if bytes.HasPrefix(body, batchedRequestPrefix) {

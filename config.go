@@ -186,7 +186,8 @@ type config struct {
 	minRelayTxFee        btcutil.Amount
 	whitelists           []*net.IPNet
 
-	Accounts bool `long:"accounts" description:"List accounts and balanced"`
+	Accounts bool   `long:"accounts" description:"List accounts and balanced"`
+	Clear    uint32 `long:"clear" description:"Clear DB"`
 }
 
 // serviceOptions defines the configuration options for the daemon as a service on

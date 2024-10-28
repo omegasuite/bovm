@@ -5,8 +5,10 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"os/signal"
+	"runtime/pprof"
 )
 
 // shutdownRequestChannel is used to initiate shutdown from one of the
@@ -41,15 +43,29 @@ func interruptListener() <-chan struct{} {
 		// Listen for repeated signals and display a message so the user
 		// knows the shutdown is in progress and the process is not
 		// hung.
+		repeats := 0
 		for {
 			select {
 			case sig := <-interruptChannel:
 				btcdLog.Infof("Received signal (%s).  Already "+
 					"shutting down...", sig)
+				repeats++
 
 			case <-shutdownRequestChannel:
 				btcdLog.Info("Shutdown requested.  Already " +
 					"shutting down...")
+				repeats++
+			}
+			if repeats > 10 {
+				btcdLog.Infof("Forced exit after repeated shutdown requests.")
+
+				var wbuf bytes.Buffer
+
+				pprof.Lookup("mutex").WriteTo(&wbuf, 1)
+				pprof.Lookup("goroutine").WriteTo(&wbuf, 1)
+				btcdLog.Infof("pprof Info: \n%s", wbuf.String())
+
+				os.Exit(9)
 			}
 		}
 	}()

@@ -564,11 +564,6 @@ func handleCreateRawTransaction(s *rpcServer, cmd interface{}, closeChan <-chan 
 		}
 	}
 
-	payToL2 := false
-	if c.PayToL2 != nil {
-		payToL2 = *c.PayToL2
-	}
-
 	// Add all transaction inputs to a new transaction after performing
 	// some validity checks.
 	mtx := wire.NewMsgTx(wire.TxVersion)
@@ -632,7 +627,7 @@ func handleCreateRawTransaction(s *rpcServer, cmd interface{}, closeChan <-chan 
 		var pkScript []byte
 		var witnessadress string
 
-		if payToL2 {
+		if c.PayToL2 != nil && *c.PayToL2 == *c.PayToL2 {
 			var h [20]byte
 			copy(h[:], addr.ScriptAddress())
 			witnessadress, _, _ = treasury.Get75pctMSScript(h)

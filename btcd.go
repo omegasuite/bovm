@@ -271,12 +271,15 @@ func btcdMain(serverChan chan<- *server) error {
 		return err
 	}
 
-	omgd.Connect(server.chain.Subscribe)
+	var q chan *omgd.BtcFetchQ
+	omgd.Connect(server.chain.Subscribe, q)
 
 	server.Start()
 	if serverChan != nil {
 		serverChan <- server
 	}
+
+	server.UtxoFeed(q)
 
 	// start BTCD Layer 2
 	omgd.Start(shutdownRequestChannel)
@@ -289,6 +292,30 @@ func btcdMain(serverChan chan<- *server) error {
 	omgd.Stop()
 
 	return nil
+}
+
+func (s *server) UtxoFeed(q chan *omgd.BtcFetchQ) {
+	interrupt := interruptListener()
+	for {
+		select {
+		case <-interrupt:
+			return
+		case w, ok := <-q:
+			if !ok {
+				return
+			}
+			if w.Result == nil {
+				continue
+			}
+
+			utxo, err := s.chain.FetchUtxoEntry(w.Outpoint)
+			if err != nil {
+				w.Result <- nil
+			} else {
+				w.Result <- utxo.PkScript()
+			}
+		}
+	}
 }
 
 // removeRegressionDB removes the existing regression test database if running

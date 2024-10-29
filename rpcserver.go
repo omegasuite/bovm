@@ -627,7 +627,7 @@ func handleCreateRawTransaction(s *rpcServer, cmd interface{}, closeChan <-chan 
 		var pkScript []byte
 		var witnessadress string
 
-		if c.PayToL2 != nil && *c.PayToL2 == *c.PayToL2 {
+		if c.PayToL2 != nil && *c.PayToL2 == encodedAddr {
 			var h [20]byte
 			copy(h[:], addr.ScriptAddress())
 			witnessadress, _, _ = treasury.Get75pctMSScript(h)

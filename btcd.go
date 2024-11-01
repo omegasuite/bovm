@@ -271,7 +271,7 @@ func btcdMain(serverChan chan<- *server) error {
 		return err
 	}
 
-	var q chan *omgd.BtcFetchQ
+	q := make(chan *omgd.BtcFetchQ, 1000)
 	omgd.Connect(server.chain.Subscribe, q)
 
 	server.Start()
@@ -279,7 +279,7 @@ func btcdMain(serverChan chan<- *server) error {
 		serverChan <- server
 	}
 
-	server.UtxoFeed(q)
+	go server.UtxoFeed(q)
 
 	// start BTCD Layer 2
 	omgd.Start(shutdownRequestChannel)
